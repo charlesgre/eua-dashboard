@@ -10,7 +10,7 @@ from datetime import datetime
 st.set_page_config(page_title="Gas Dashboard", layout="wide")
 st.title("📊 EUA Analytics Dashboard")
 
-file_path = r"\\gvaps1\USR6\CHGE\desktop\Gas storages.xlsx"
+file_path = "Gas storages.xlsx"
 
 tabs = st.tabs(["📦 Stocks", "💰 Prix (EUA/TTF)", "🔁 Corrélation EUA vs Stocks", "📈 Stratégies RSI / StochRSI"])
 
