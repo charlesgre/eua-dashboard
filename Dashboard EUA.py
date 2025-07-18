@@ -1,18 +1,16 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
 import calendar
-import statsmodels.api as sm
-import matplotlib.ticker as ticker
 from datetime import datetime
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="Gas Dashboard", layout="wide")
-st.title("📊 EUA Analytics Dashboard")
+st.title("\U0001F4CA EUA Analytics Dashboard")
 
 file_path = "Gas storages.xlsx"
 
-tabs = st.tabs(["📦 Stocks", "💰 Prix (EUA/TTF)", "🔁 Corrélation EUA vs Stocks", "📈 Stratégies RSI / StochRSI"])
+tabs = st.tabs(["\U0001F4E6 Stocks", "\U0001F4B0 Prix (EUA/TTF)", "\U0001F4C8 Stratégies RSI / StochRSI"])
 
 # === 1. Onglet STOCKS ===
 with tabs[0]:
@@ -48,7 +46,7 @@ with tabs[0]:
         'Netherlands Gas Storage (TWh)': 'Netherlands'
     }
     selected_country = st.selectbox("Choisir un pays :", list(country_map.keys()))
-    
+
     series = df_stock[['Date', selected_country]].dropna()
     series['Value'] = pd.to_numeric(series[selected_country], errors='coerce')
     series = series[series['Date'].dt.year >= start_year].dropna()
@@ -68,29 +66,63 @@ with tabs[0]:
     mean_vals = np.nanmean(all_years_array, axis=0)
 
     full_doy = np.arange(1, 367)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.fill_between(full_doy, min_vals, max_vals, color='grey', alpha=0.3, label='Min-Max 2020–2024')
-    ax.plot(full_doy, mean_vals, color='black', linestyle='--', linewidth=2, label='Moyenne 2020–2024')
+    mois = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    mois_jours = [15, 45, 75, 105, 135, 165, 195, 225, 255, 285, 315, 345]
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=full_doy,
+        y=min_vals,
+        mode='lines',
+        line=dict(color='lightgray'),
+        showlegend=False
+    ))
+    fig.add_trace(go.Scatter(
+        x=full_doy,
+        y=max_vals,
+        mode='lines',
+        fill='tonexty',
+        line=dict(color='lightgray'),
+        name='Min-Max 2020–2024',
+        fillcolor='rgba(128,128,128,0.3)'
+    ))
+    fig.add_trace(go.Scatter(
+        x=full_doy,
+        y=mean_vals,
+        mode='lines',
+        name='Moyenne 2020–2024',
+        line=dict(color='black', dash='dash')
+    ))
 
     for year in range(start_year, end_year + 1):
         yearly = series[series['Date'].dt.year == year].copy()
         if not yearly.empty:
             yearly['DOY'] = yearly['Date'].dt.dayofyear
-            alpha_val = 1.0 if year >= 2023 else 0.4
-            lw = 2 if year >= 2023 else 1
-            ax.plot(yearly['DOY'], yearly['Value'], label=str(year),
-                    color=colors.get(year, 'gray'), alpha=alpha_val, linewidth=lw)
-    
-    mois = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    mois_jours = [15, 45, 75, 105, 135, 165, 195, 225, 255, 285, 315, 345]
-    ax.set_xticks(mois_jours)
-    ax.set_xticklabels(mois)
-    ax.set_title(f"{country_map[selected_country]} - Stockage de gaz (TWh)")
-    ax.set_xlabel("Mois")
-    ax.set_ylabel("TWh")
-    ax.grid(True)
-    ax.legend()
-    st.pyplot(fig)
+            fig.add_trace(go.Scatter(
+                x=yearly['DOY'],
+                y=yearly['Value'],
+                mode='lines',
+                name=str(year),
+                line=dict(width=2 if year >= 2023 else 1),
+                opacity=1.0 if year >= 2023 else 0.4
+            ))
+
+    fig.update_layout(
+        title=f"{country_map[selected_country]} - Stockage de gaz (TWh)",
+        xaxis=dict(
+            title="Mois",
+            tickmode='array',
+            tickvals=mois_jours,
+            ticktext=mois
+        ),
+        yaxis_title="TWh",
+        legend=dict(orientation="h"),
+        margin=dict(l=40, r=40, t=50, b=40),
+        height=500
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 # === 2. Onglet PRIX ===
 with tabs[1]:
@@ -103,95 +135,35 @@ with tabs[1]:
     df_prices = df_prices[df_prices['Year'].between(2021, 2025)]
     df_prices['DayOfYear'] = df_prices['Date'].dt.dayofyear
 
-    year_styles = {
-        2021: {'color': 'blue', 'alpha': 0.3},
-        2022: {'color': 'orange', 'alpha': 0.3},
-        2023: {'color': 'yellow', 'alpha': 1.0},
-        2024: {'color': 'green', 'alpha': 1.0},
-        2025: {'color': 'red', 'alpha': 1.0}
-    }
-
-    def seasonal_price_plot(df, col, ylabel, exclude=None):
-        fig, ax = plt.subplots(figsize=(12, 5))
+    def seasonal_price_plotly(df, col, ylabel, exclude=None):
+        fig = go.Figure()
         for year in sorted(df['Year'].unique()):
             if exclude and year in exclude:
                 continue
             data = df[df['Year'] == year]
-            style = year_styles.get(year, {'color': 'gray', 'alpha': 0.5})
-            ax.plot(data['DayOfYear'], data[col], label=str(year), color=style['color'], alpha=style['alpha'], linewidth=2)
+            fig.add_trace(go.Scatter(
+                x=data['DayOfYear'],
+                y=data[col],
+                mode='lines',
+                name=str(year),
+                opacity=1.0 if year >= 2023 else 0.3
+            ))
         ticks = [pd.Timestamp(2022, m, 1).dayofyear for m in range(1, 13)]
         labels = [calendar.month_abbr[m] for m in range(1, 13)]
-        ax.set_xticks(ticks)
-        ax.set_xticklabels(labels)
-        ax.set_title(f"{col} - Seasonal Daily Pattern")
-        ax.set_xlabel("Month")
-        ax.set_ylabel(ylabel)
-        ax.grid(True)
-        ax.legend()
-        st.pyplot(fig)
+        fig.update_layout(
+            title=f"{col} - Seasonal Daily Pattern",
+            xaxis=dict(title="Month", tickmode='array', tickvals=ticks, ticktext=labels),
+            yaxis_title=ylabel,
+            legend_title="Année",
+            margin=dict(l=40, r=40, t=50, b=40)
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    seasonal_price_plot(df_prices, 'EUA', "Price (€/tCO2)")
-    seasonal_price_plot(df_prices, 'TTF', "Price (€/MWh)", exclude=[2021, 2022])
+    seasonal_price_plotly(df_prices, 'EUA', "Price (€/tCO2)")
+    seasonal_price_plotly(df_prices, 'TTF', "Price (€/MWh)", exclude=[2021, 2022])
 
-# === 3. Onglet CORRELATION ===
+# === 3. STRATÉGIES RSI ===
 with tabs[2]:
-    st.header("Corrélation EUA vs Stock Gaz")
-    df_corr = pd.read_excel(file_path, sheet_name="Correl EUA vs stocks", header=6)
-    df_corr.columns = ['Date', 'EUA_Price', 'Gas_Storage_TWh', 'Ignore']
-    df_corr = df_corr[['Date', 'EUA_Price', 'Gas_Storage_TWh']]
-    df_corr['Date'] = pd.to_datetime(df_corr['Date'], errors='coerce')
-    df_corr = df_corr.dropna()
-    df_corr.set_index('Date', inplace=True)
-    df_corr['EUA_smooth'] = df_corr['EUA_Price'].rolling(7).mean()
-    df_corr['Gas_smooth'] = df_corr['Gas_Storage_TWh'].rolling(7).mean()
-    df_corr = df_corr.dropna()
-
-    fig1, ax1 = plt.subplots(figsize=(12, 5))
-    ax1.plot(df_corr.index, df_corr['Gas_smooth'], label="Stock Gaz (TWh)", color="blue")
-    ax2 = ax1.twinx()
-    ax2.plot(df_corr.index, df_corr['EUA_smooth'], label="Prix EUA", color="green")
-    ax1.set_ylabel("Stock (TWh)", color="blue")
-    ax2.set_ylabel("Prix EUA (€/tCO2)", color="green")
-    ax1.set_xlabel("Date")
-    fig1.suptitle("Corrélation Stock Gaz vs Prix EUA - Moyenne glissante 7 jours")
-    fig1.tight_layout()
-    st.pyplot(fig1)
-
-    lags = range(-60, 61)
-    corrs = [df_corr['EUA_smooth'].corr(df_corr['Gas_smooth'].shift(lag)) for lag in lags]
-    fig2, ax = plt.subplots(figsize=(12, 4))
-    ax.plot(lags, corrs, marker='o')
-    ax.axvline(0, color='black', linestyle='--')
-    ax.set_title("Corrélation croisée entre Stock Gaz et Prix EUA")
-    ax.set_xlabel("Décalage (jours)")
-    ax.set_ylabel("Corrélation")
-    ax.grid(True)
-    st.pyplot(fig2)
-
-    max_lag = lags[np.argmax(corrs)]
-    st.info(f"🔁 Décalage avec corrélation maximale : {max_lag} jours  | Corrélation : {max(corrs):.3f}")
-
-    # Régression linéaire
-    X = df_corr['Gas_smooth']
-    y = df_corr['EUA_smooth']
-    X_ = sm.add_constant(X)
-    model = sm.OLS(y, X_).fit()
-
-    fig3, ax = plt.subplots(figsize=(8, 5))
-    ax.scatter(X, y, alpha=0.4, label='Données')
-    ax.plot(X, model.predict(X_), color='red', label='Régression')
-    ax.set_title("Régression Linéaire: Prix EUA vs Stock Gaz")
-    ax.set_xlabel("Stock Gaz (TWh)")
-    ax.set_ylabel("Prix EUA (€/tCO2)")
-    ax.grid(True)
-    ax.legend()
-    st.pyplot(fig3)
-
-    st.subheader("Résumé du modèle de régression")
-    st.text(model.summary())
-
-# === 4. STRATÉGIES RSI ===
-with tabs[3]:
     st.header("Stratégies techniques sur le marché EUA")
 
     df = pd.read_excel(file_path, sheet_name="Prices", skiprows=6, usecols="A,B")
@@ -248,30 +220,25 @@ with tabs[3]:
     trades_stoch = run_strategy(df, lambda r: r['StochRSI'] < 0.2, lambda r: r['StochRSI'] > 0.8)
 
     st.subheader("RSI (14)")
-    fig_rsi, ax = plt.subplots(figsize=(14, 3))
-    ax.plot(df.index, df['RSI'], color='blue')
-    ax.axhline(70, color='red', linestyle='--')
-    ax.axhline(30, color='green', linestyle='--')
-    ax.grid(True)
-    st.pyplot(fig_rsi)
+    fig_rsi = go.Figure()
+    fig_rsi.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', name='RSI'))
+    fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+    fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
+    st.plotly_chart(fig_rsi, use_container_width=True)
 
     st.subheader("Stochastic RSI (14)")
-    fig_stoch, ax = plt.subplots(figsize=(14, 3))
-    ax.plot(df.index, df['StochRSI'], color='orange')
-    ax.axhline(0.8, color='red', linestyle='--')
-    ax.axhline(0.2, color='green', linestyle='--')
-    ax.grid(True)
-    st.pyplot(fig_stoch)
+    fig_stoch = go.Figure()
+    fig_stoch.add_trace(go.Scatter(x=df.index, y=df['StochRSI'], mode='lines', name='StochRSI', line_color='orange'))
+    fig_stoch.add_hline(y=0.8, line_dash="dash", line_color="red")
+    fig_stoch.add_hline(y=0.2, line_dash="dash", line_color="green")
+    st.plotly_chart(fig_stoch, use_container_width=True)
 
     st.subheader("Cumulative PnL des stratégies")
-    fig_pnl, ax = plt.subplots(figsize=(14, 5))
-    ax.plot(trades_rsi.index, trades_rsi['Cumulative PnL'], label='RSI Strategy', color='green')
-    ax.plot(trades_stoch.index, trades_stoch['Cumulative PnL'], label='StochRSI Strategy', color='orange')
-    ax.legend()
-    ax.set_ylabel("Cumulative PnL (€)")
-    ax.grid(True)
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:,.0f} €"))
-    st.pyplot(fig_pnl)
+    fig_pnl = go.Figure()
+    fig_pnl.add_trace(go.Scatter(x=trades_rsi.index, y=trades_rsi['Cumulative PnL'], name='RSI Strategy'))
+    fig_pnl.add_trace(go.Scatter(x=trades_stoch.index, y=trades_stoch['Cumulative PnL'], name='StochRSI Strategy'))
+    fig_pnl.update_layout(yaxis_title="Cumulative PnL (€)")
+    st.plotly_chart(fig_pnl, use_container_width=True)
 
     st.subheader("PnL Annuel par stratégie")
     annual_rsi = trades_rsi.groupby('Year')['PnL €'].sum()
@@ -279,13 +246,8 @@ with tabs[3]:
 
     x = np.arange(len(annual_rsi.index))
     bar_width = 0.35
-    fig_bar, ax = plt.subplots(figsize=(12, 5))
-    ax.bar(x - bar_width/2, annual_rsi.values, width=bar_width, label='RSI Strategy', color='green')
-    ax.bar(x + bar_width/2, annual_stoch.values, width=bar_width, label='StochRSI Strategy', color='orange')
-    ax.set_xticks(x)
-    ax.set_xticklabels(annual_rsi.index)
-    ax.set_ylabel("PnL (€)")
-    ax.legend()
-    ax.grid(True, axis='y')
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:,.0f} €"))
-    st.pyplot(fig_bar)
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(x=annual_rsi.index - 0.2, y=annual_rsi.values, name='RSI Strategy'))
+    fig_bar.add_trace(go.Bar(x=annual_stoch.index + 0.2, y=annual_stoch.values, name='StochRSI Strategy'))
+    fig_bar.update_layout(barmode='group', xaxis_title='Année', yaxis_title='PnL (€)')
+    st.plotly_chart(fig_bar, use_container_width=True)
