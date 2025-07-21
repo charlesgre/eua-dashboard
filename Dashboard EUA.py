@@ -29,6 +29,11 @@ with tabs[0]:
         2023: 'yellow', 2024: 'green', 2025: 'red'
     }
 
+
+    if st.button("🔄 Forcer la mise à jour des données"):
+        st.cache_data.clear()
+        st.experimental_rerun()
+
     @st.cache_data
     def load_stock_data():
         df = pd.read_excel(file_path, sheet_name="Stocks", header=None, skiprows=6)
