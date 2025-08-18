@@ -32,7 +32,7 @@ with tabs[0]:
 
     if st.button("🔄 Forcer la mise à jour des données"):
         st.cache_data.clear()
-        st.experimental_rerun()
+        st.rerun()
 
     @st.cache_data
     def load_stock_data():
