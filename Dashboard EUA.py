@@ -7,22 +7,37 @@ import plotly.graph_objects as go
 from pathlib import Path
 import os
 
+# ---------- App setup ----------
 st.set_page_config(page_title="Gas Dashboard", layout="wide")
 st.title("\U0001F4CA EUA Analytics Dashboard")
 
-# --- chemins robustes ---
+# Small helper to surface exceptions in the UI (avoids the “Oh no” page)
+DEBUG = True
+def guard(render_fn, section_name: str):
+    try:
+        render_fn()
+    except Exception as e:
+        st.error(f"🚨 Erreur dans: {section_name}")
+        st.exception(e)
+        if DEBUG:
+            st.stop()
+        else:
+            raise
+
+# ---------- Robust paths ----------
 try:
     APP_DIR = Path(__file__).resolve().parent
 except NameError:
     APP_DIR = Path.cwd()
 
-file_path = APP_DIR / "Gas storages.xlsx"   # data gaz
-eua_oi_path = APP_DIR / "EUA & OI forward.xlsx"  # OI fichier principal
+file_path = APP_DIR / "Gas storages.xlsx"               # gas storages/prices workbook
+eua_oi_path = APP_DIR / "EUA & OI forward.xlsx"         # main OI workbook
 if not eua_oi_path.exists():
-    alt = APP_DIR / "EUA OI & forward.xlsx"     # fallback ancien nom
+    alt = APP_DIR / "EUA OI & forward.xlsx"             # fallback older name
     if alt.exists():
         eua_oi_path = alt
 
+# ---------- Tabs ----------
 tabs = st.tabs([
     "\U0001F4E6 Stocks",
     "\U0001F4B0 Prix (EUA/TTF)",
@@ -30,11 +45,12 @@ tabs = st.tabs([
     "\U0001F4C9 EUA Open Interest"
 ])
 
-# ===================== 1) STOCKS =====================
-with tabs[0]:
+# ======================================================
+# 1) STOCKS
+# ======================================================
+def render_stocks():
     st.header("Stockages de gaz - par pays")
 
-    # Vérif fichier
     if not file_path.exists():
         st.error(f"Fichier introuvable : **{file_path.name}**. Place-le dans : {APP_DIR}")
         st.stop()
@@ -128,8 +144,13 @@ with tabs[0]:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# ===================== 2) PRIX =====================
-with tabs[1]:
+with tabs[0]:
+    guard(render_stocks, "Onglet Stocks")
+
+# ======================================================
+# 2) PRIX
+# ======================================================
+def render_prices():
     st.header("Prix du marché - EUA & TTF")
 
     if not file_path.exists():
@@ -167,8 +188,13 @@ with tabs[1]:
     seasonal_price_plotly(df_prices, 'EUA', "Price (€/tCO2)")
     seasonal_price_plotly(df_prices, 'TTF', "Price (€/MWh)", exclude=[2021, 2022])
 
-# ===================== 3) STRATÉGIES RSI =====================
-with tabs[2]:
+with tabs[1]:
+    guard(render_prices, "Onglet Prix")
+
+# ======================================================
+# 3) STRATÉGIES RSI
+# ======================================================
+def render_strategies():
     st.header("Stratégies techniques sur le marché EUA")
 
     if not file_path.exists():
@@ -264,8 +290,13 @@ with tabs[2]:
     fig_bar.update_layout(barmode='group', xaxis_title='Année', yaxis_title='PnL (€)')
     st.plotly_chart(fig_bar, use_container_width=True)
 
-# ===================== 4) EUA OPEN INTEREST =====================
-with tabs[3]:
+with tabs[2]:
+    guard(render_strategies, "Onglet Stratégies")
+
+# ======================================================
+# 4) EUA OPEN INTEREST
+# ======================================================
+def render_oi():
     st.header("EUA Futures - Open Interest (feuille 2)")
 
     if not eua_oi_path.exists():
@@ -300,12 +331,8 @@ with tabs[3]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
         return df, titles, sheet_name
 
-    try:
-        eua_mtime = eua_oi_path.stat().st_mtime
-        df_oi, contract_titles, used_sheet = load_eua_oi(eua_oi_path, eua_mtime)
-    except Exception as e:
-        st.exception(e)
-        st.stop()
+    eua_mtime = os.path.getmtime(eua_oi_path)
+    df_oi, contract_titles, used_sheet = load_eua_oi(eua_oi_path, eua_mtime)
 
     st.caption(
         f"Fichier: **{eua_oi_path.name}** — Feuille utilisée: **{used_sheet}** — "
@@ -372,3 +399,6 @@ with tabs[3]:
             file_name="eua_open_interest.csv",
             mime="text/csv"
         )
+
+with tabs[3]:
+    guard(render_oi, "Onglet OI")
