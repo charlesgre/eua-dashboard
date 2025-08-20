@@ -14,7 +14,13 @@ st.title("\U0001F4CA EUA Analytics Dashboard")
 APP_DIR = Path(__file__).resolve().parent
 file_path = APP_DIR / "Gas storages.xlsx"   # évite les surprises de CWD
 
-tabs = st.tabs(["\U0001F4E6 Stocks", "\U0001F4B0 Prix (EUA/TTF)", "\U0001F4C8 Stratégies RSI / StochRSI"])
+tabs = st.tabs([
+    "\U0001F4E6 Stocks",
+    "\U0001F4B0 Prix (EUA/TTF)",
+    "\U0001F4C8 Stratégies RSI / StochRSI",
+    "\U0001F4C9 EUA Open Interest"
+])
+
 
 # === 1. Onglet STOCKS ===
 with tabs[0]:
@@ -238,3 +244,138 @@ with tabs[2]:
     fig_bar.add_trace(go.Bar(x=annual_stoch.index + 0.2, y=annual_stoch.values, name='StochRSI Strategy'))
     fig_bar.update_layout(barmode='group', xaxis_title='Année', yaxis_title='PnL (€)')
     st.plotly_chart(fig_bar, use_container_width=True)
+
+# === 4. Onglet OPEN INTEREST (EUA) ===
+with tabs[3]:
+    st.header("EUA Futures - Open Interest (feuille 2)")
+
+    # Fichier excel OI (nouveau nom)
+    eua_oi_path = APP_DIR / "EUA & OI forward.xlsx"
+    # Rétro-compatibilité si l’ancien nom est encore utilisé
+    if not eua_oi_path.exists():
+        alt = APP_DIR / "EUA OI & forward.xlsx"
+        if alt.exists():
+            eua_oi_path = alt
+
+    if not eua_oi_path.exists():
+        st.error(f"Fichier introuvable : **{eua_oi_path.name}**. Place-le dans : {APP_DIR}")
+        st.stop()
+
+    # Rafraîchissement manuel
+    col_a, _ = st.columns([1, 4])
+    with col_a:
+        if st.button("🔄 Recharger l'OI EUA"):
+            st.cache_data.clear()
+            st.rerun()
+
+    def _pick_sheet_name(xlsx_path: Path) -> str:
+        """Choisit la feuille 2 : 'Sheet2' si elle existe, sinon la 2ᵉ feuille du classeur."""
+        xls = pd.ExcelFile(xlsx_path)
+        names = xls.sheet_names
+        # priorité à une feuille explicitement nommée Sheet2 (insensible à la casse)
+        for n in names:
+            if n.lower() == "sheet2":
+                return n
+        # sinon, si on a au moins 2 feuilles, on prend la 2e (index 1)
+        if len(names) >= 2:
+            return names[1]
+        # fallback (rare)
+        return names[0]
+
+    @st.cache_data(show_spinner=False)
+    def load_eua_oi(xlsx_path: Path, file_version: float):
+        sheet_name = _pick_sheet_name(xlsx_path)
+
+        # 1) Titres en ligne 1 (index 0) -> noms descriptifs des contrats
+        titles_row = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None, nrows=1)
+        titles = titles_row.iloc[0, 1:].dropna().astype(str).tolist()  # ignore 1ère colonne (Date)
+
+        # 2) Données à partir de la ligne 5
+        df = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None, skiprows=4)
+
+        # 3) Tronquer aux colonnes utiles (Date + autant de titres)
+        df = df.iloc[:, : (1 + len(titles))]
+        df.columns = ["Date"] + titles
+
+        # 4) Nettoyage des types
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"]).sort_values("Date")
+        for c in df.columns[1:]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        return df, titles, sheet_name
+
+    eua_mtime = eua_oi_path.stat().st_mtime
+    try:
+        df_oi, contract_titles, used_sheet = load_eua_oi(eua_oi_path, eua_mtime)
+    except Exception as e:
+        st.exception(e)
+        st.stop()
+
+    st.caption(
+        f"Fichier: **{eua_oi_path.name}** — Feuille utilisée: **{used_sheet}** — "
+        f"Dernière date: **{df_oi['Date'].max().date()}** (mtime: {int(eua_mtime)})"
+    )
+
+    # --- Contrôles UI
+    left, right = st.columns([2, 1])
+    with left:
+        sel_contracts = st.multiselect(
+            "Contrats à superposer (facultatif, sinon tous) :",
+            options=contract_titles,
+            default=contract_titles
+        )
+    with right:
+        single_contract = st.selectbox(
+            "Graphique individuel :",
+            options=contract_titles,
+            index=0
+        )
+
+    # --- Graphique superposé
+    st.subheader("Superposé")
+    fig_super = go.Figure()
+    to_plot = sel_contracts if sel_contracts else contract_titles
+    for col in to_plot:
+        fig_super.add_trace(go.Scatter(
+            x=df_oi["Date"], y=df_oi[col],
+            mode="lines", name=col,
+            hovertemplate="%{x|%Y-%m-%d} — %{y:,}<extra>" + col + "</extra>"
+        ))
+    fig_super.update_layout(
+        title="Historique des contrats (Open Interest) - Superposé",
+        xaxis_title="Date",
+        yaxis_title="Open Interest",
+        yaxis=dict(tickformat=","),  # séparateur des milliers
+        legend=dict(orientation="h"),
+        margin=dict(l=40, r=40, t=50, b=40),
+        height=520
+    )
+    st.plotly_chart(fig_super, use_container_width=True)
+
+    # --- Graphique individuel
+    st.subheader("Individuel")
+    fig_single = go.Figure()
+    fig_single.add_trace(go.Scatter(
+        x=df_oi["Date"], y=df_oi[single_contract],
+        mode="lines", name=single_contract,
+        hovertemplate="%{x|%Y-%m-%d} — %{y:,}<extra>" + single_contract + "</extra>"
+    ))
+    fig_single.update_layout(
+        title=f"Historique Open Interest - {single_contract}",
+        xaxis_title="Date",
+        yaxis_title="Open Interest",
+        yaxis=dict(tickformat=","),  # séparateur des milliers
+        margin=dict(l=40, r=40, t=50, b=40),
+        height=460
+    )
+    st.plotly_chart(fig_single, use_container_width=True)
+
+    # --- Export CSV
+    with st.expander("Export"):
+        st.download_button(
+            label="📥 Télécharger les données OI (CSV)",
+            data=df_oi.to_csv(index=False).encode("utf-8"),
+            file_name="eua_open_interest.csv",
+            mime="text/csv"
+        )
