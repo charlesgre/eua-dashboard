@@ -4,11 +4,15 @@ import numpy as np
 import calendar
 from datetime import datetime
 import plotly.graph_objects as go
+from pathlib import Path
+import os
 
 st.set_page_config(page_title="Gas Dashboard", layout="wide")
 st.title("\U0001F4CA EUA Analytics Dashboard")
 
-file_path = "Gas storages.xlsx"
+# --- chemins robustes ---
+APP_DIR = Path(__file__).resolve().parent
+file_path = APP_DIR / "Gas storages.xlsx"   # évite les surprises de CWD
 
 tabs = st.tabs(["\U0001F4E6 Stocks", "\U0001F4B0 Prix (EUA/TTF)", "\U0001F4C8 Stratégies RSI / StochRSI"])
 
@@ -24,25 +28,33 @@ with tabs[0]:
         'UK Gas Storage (TWh)', 'Germany Gas Storage (TWh)', 'Netherlands Gas Storage (TWh)'
     ]
 
-    colors = {
-        2020: 'blue', 2021: 'orange', 2022: 'purple',
-        2023: 'yellow', 2024: 'green', 2025: 'red'
-    }
+    colors = {2020:'blue', 2021:'orange', 2022:'purple', 2023:'yellow', 2024:'green', 2025:'red'}
 
-
+    # bouton manuel si besoin
     if st.button("🔄 Forcer la mise à jour des données"):
         st.cache_data.clear()
         st.rerun()
 
-    @st.cache_data
-    def load_stock_data():
-        df = pd.read_excel(file_path, sheet_name="Stocks", header=None, skiprows=6)
+    # === clé de cache liée au fichier ===
+    @st.cache_data(show_spinner=False)
+    def load_stock_data(xlsx_path: Path, file_version: float):
+        # file_version = os.path.getmtime(xlsx_path) -> utilisé pour invalider le cache
+        df = pd.read_excel(xlsx_path, sheet_name="Stocks", header=None, skiprows=6)
         df = df.iloc[:, :6]
         df.columns = columns_mapping
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date'])
+        # normalisation numérique
+        for c in columns_mapping[1:]:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
         return df.dropna()
 
-    df_stock = load_stock_data()
+    file_mtime = os.path.getmtime(file_path)
+    df_stock = load_stock_data(file_path, file_mtime)
+
+    # petite info de contrôle
+    st.caption(f"Dernière date lue : **{df_stock['Date'].max().date()}**  (mtime: {int(file_mtime)})")
+
     country_map = {
         'Europe Gas Storage (TWh)': 'Europe',
         'US DOE estimated storage': 'US',
@@ -71,62 +83,32 @@ with tabs[0]:
     mean_vals = np.nanmean(all_years_array, axis=0)
 
     full_doy = np.arange(1, 367)
-    mois = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    mois_jours = [15, 45, 75, 105, 135, 165, 195, 225, 255, 285, 315, 345]
+    mois = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    mois_jours = [15,45,75,105,135,165,195,225,255,285,315,345]
 
     fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=full_doy,
-        y=min_vals,
-        mode='lines',
-        line=dict(color='lightgray'),
-        showlegend=False
-    ))
-    fig.add_trace(go.Scatter(
-        x=full_doy,
-        y=max_vals,
-        mode='lines',
-        fill='tonexty',
-        line=dict(color='lightgray'),
-        name='Min-Max 2020–2024',
-        fillcolor='rgba(128,128,128,0.3)'
-    ))
-    fig.add_trace(go.Scatter(
-        x=full_doy,
-        y=mean_vals,
-        mode='lines',
-        name='Moyenne 2020–2024',
-        line=dict(color='black', dash='dash')
-    ))
+    fig.add_trace(go.Scatter(x=full_doy, y=min_vals, mode='lines', line=dict(color='lightgray'), showlegend=False))
+    fig.add_trace(go.Scatter(x=full_doy, y=max_vals, mode='lines', fill='tonexty',
+                             line=dict(color='lightgray'), name='Min-Max 2020–2024',
+                             fillcolor='rgba(128,128,128,0.3)'))
+    fig.add_trace(go.Scatter(x=full_doy, y=mean_vals, mode='lines', name='Moyenne 2020–2024',
+                             line=dict(color='black', dash='dash')))
 
     for year in range(start_year, end_year + 1):
         yearly = series[series['Date'].dt.year == year].copy()
         if not yearly.empty:
             yearly['DOY'] = yearly['Date'].dt.dayofyear
             fig.add_trace(go.Scatter(
-                x=yearly['DOY'],
-                y=yearly['Value'],
-                mode='lines',
-                name=str(year),
-                line=dict(width=2 if year >= 2023 else 1),
-                opacity=1.0 if year >= 2023 else 0.4
+                x=yearly['DOY'], y=yearly['Value'], mode='lines', name=str(year),
+                line=dict(width=2 if year >= 2023 else 1), opacity=1.0 if year >= 2023 else 0.4
             ))
 
     fig.update_layout(
         title=f"{country_map[selected_country]} - Stockage de gaz (TWh)",
-        xaxis=dict(
-            title="Mois",
-            tickmode='array',
-            tickvals=mois_jours,
-            ticktext=mois
-        ),
-        yaxis_title="TWh",
-        legend=dict(orientation="h"),
-        margin=dict(l=40, r=40, t=50, b=40),
-        height=500
+        xaxis=dict(title="Mois", tickmode='array', tickvals=mois_jours, ticktext=mois),
+        yaxis_title="TWh", legend=dict(orientation="h"),
+        margin=dict(l=40, r=40, t=50, b=40), height=500
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
 # === 2. Onglet PRIX ===

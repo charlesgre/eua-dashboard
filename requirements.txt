@@ -5,3 +5,5 @@ numpy
 openpyxl
 statsmodels
 plotly
+pathlib
+os
