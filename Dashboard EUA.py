@@ -7,53 +7,18 @@ import plotly.graph_objects as go
 from pathlib import Path
 import os
 
-# ---------- App setup ----------
 st.set_page_config(page_title="Gas Dashboard", layout="wide")
 st.title("\U0001F4CA EUA Analytics Dashboard")
 
-# Small helper to surface exceptions in the UI (avoids the “Oh no” page)
-DEBUG = True
-def guard(render_fn, section_name: str):
-    try:
-        render_fn()
-    except Exception as e:
-        st.error(f"🚨 Erreur dans: {section_name}")
-        st.exception(e)
-        if DEBUG:
-            st.stop()
-        else:
-            raise
+# --- chemins robustes ---
+APP_DIR = Path(__file__).resolve().parent
+file_path = APP_DIR / "Gas storages.xlsx"   # évite les surprises de CWD
 
-# ---------- Robust paths ----------
-try:
-    APP_DIR = Path(__file__).resolve().parent
-except NameError:
-    APP_DIR = Path.cwd()
+tabs = st.tabs(["\U0001F4E6 Stocks", "\U0001F4B0 Prix (EUA/TTF)", "\U0001F4C8 Stratégies RSI / StochRSI"])
 
-file_path = APP_DIR / "Gas storages.xlsx"               # gas storages/prices workbook
-eua_oi_path = APP_DIR / "EUA & OI forward.xlsx"         # main OI workbook
-if not eua_oi_path.exists():
-    alt = APP_DIR / "EUA OI & forward.xlsx"             # fallback older name
-    if alt.exists():
-        eua_oi_path = alt
-
-# ---------- Tabs ----------
-tabs = st.tabs([
-    "\U0001F4E6 Stocks",
-    "\U0001F4B0 Prix (EUA/TTF)",
-    "\U0001F4C8 Stratégies RSI / StochRSI",
-    "\U0001F4C9 EUA Open Interest"
-])
-
-# ======================================================
-# 1) STOCKS
-# ======================================================
-def render_stocks():
+# === 1. Onglet STOCKS ===
+with tabs[0]:
     st.header("Stockages de gaz - par pays")
-
-    if not file_path.exists():
-        st.error(f"Fichier introuvable : **{file_path.name}**. Place-le dans : {APP_DIR}")
-        st.stop()
 
     start_year = 2020
     end_year = 2025
@@ -63,6 +28,33 @@ def render_stocks():
         'UK Gas Storage (TWh)', 'Germany Gas Storage (TWh)', 'Netherlands Gas Storage (TWh)'
     ]
 
+    colors = {2020:'blue', 2021:'orange', 2022:'purple', 2023:'yellow', 2024:'green', 2025:'red'}
+
+    # bouton manuel si besoin
+    if st.button("🔄 Forcer la mise à jour des données"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # === clé de cache liée au fichier ===
+    @st.cache_data(show_spinner=False)
+    def load_stock_data(xlsx_path: Path, file_version: float):
+        # file_version = os.path.getmtime(xlsx_path) -> utilisé pour invalider le cache
+        df = pd.read_excel(xlsx_path, sheet_name="Stocks", header=None, skiprows=6)
+        df = df.iloc[:, :6]
+        df.columns = columns_mapping
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date'])
+        # normalisation numérique
+        for c in columns_mapping[1:]:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+        return df.dropna()
+
+    file_mtime = os.path.getmtime(file_path)
+    df_stock = load_stock_data(file_path, file_mtime)
+
+    # petite info de contrôle
+    st.caption(f"Dernière date lue : **{df_stock['Date'].max().date()}**  (mtime: {int(file_mtime)})")
+
     country_map = {
         'Europe Gas Storage (TWh)': 'Europe',
         'US DOE estimated storage': 'US',
@@ -70,32 +62,7 @@ def render_stocks():
         'Germany Gas Storage (TWh)': 'Germany',
         'Netherlands Gas Storage (TWh)': 'Netherlands'
     }
-
-    if st.button("🔄 Forcer la mise à jour des données", key="refresh_stocks"):
-        st.cache_data.clear()
-        st.rerun()
-
-    @st.cache_data(show_spinner=False)
-    def load_stock_data(xlsx_path: Path, file_version: float):
-        df = pd.read_excel(xlsx_path, sheet_name="Stocks", header=None, skiprows=6)
-        df = df.iloc[:, :len(columns_mapping)]
-        df.columns = columns_mapping
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        for c in columns_mapping[1:]:
-            df[c] = pd.to_numeric(df[c], errors='coerce')
-        df = df.dropna(subset=['Date'])
-        return df.dropna()
-
-    file_mtime = os.path.getmtime(file_path)
-    df_stock = load_stock_data(file_path, file_mtime)
-
-    st.caption(f"Dernière date lue : **{df_stock['Date'].max().date()}**  (mtime: {int(file_mtime)})")
-
-    selected_country = st.selectbox(
-        "Choisir un pays :",
-        list(country_map.keys()),
-        key="country_select"
-    )
+    selected_country = st.selectbox("Choisir un pays :", list(country_map.keys()))
 
     series = df_stock[['Date', selected_country]].dropna()
     series['Value'] = pd.to_numeric(series[selected_country], errors='coerce')
@@ -144,19 +111,9 @@ def render_stocks():
     )
     st.plotly_chart(fig, use_container_width=True)
 
-with tabs[0]:
-    guard(render_stocks, "Onglet Stocks")
-
-# ======================================================
-# 2) PRIX
-# ======================================================
-def render_prices():
+# === 2. Onglet PRIX ===
+with tabs[1]:
     st.header("Prix du marché - EUA & TTF")
-
-    if not file_path.exists():
-        st.error(f"Fichier introuvable : **{file_path.name}**.")
-        st.stop()
-
     df_prices = pd.read_excel(file_path, sheet_name="Prices", skiprows=6)
     df_prices.columns = ['Date', 'EUA', 'TTF']
     df_prices['Date'] = pd.to_datetime(df_prices['Date'], errors='coerce')
@@ -172,7 +129,10 @@ def render_prices():
                 continue
             data = df[df['Year'] == year]
             fig.add_trace(go.Scatter(
-                x=data['DayOfYear'], y=data[col], mode='lines', name=str(year),
+                x=data['DayOfYear'],
+                y=data[col],
+                mode='lines',
+                name=str(year),
                 opacity=1.0 if year >= 2023 else 0.3
             ))
         ticks = [pd.Timestamp(2022, m, 1).dayofyear for m in range(1, 13)]
@@ -180,7 +140,8 @@ def render_prices():
         fig.update_layout(
             title=f"{col} - Seasonal Daily Pattern",
             xaxis=dict(title="Month", tickmode='array', tickvals=ticks, ticktext=labels),
-            yaxis_title=ylabel, legend_title="Année",
+            yaxis_title=ylabel,
+            legend_title="Année",
             margin=dict(l=40, r=40, t=50, b=40)
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -188,18 +149,9 @@ def render_prices():
     seasonal_price_plotly(df_prices, 'EUA', "Price (€/tCO2)")
     seasonal_price_plotly(df_prices, 'TTF', "Price (€/MWh)", exclude=[2021, 2022])
 
-with tabs[1]:
-    guard(render_prices, "Onglet Prix")
-
-# ======================================================
-# 3) STRATÉGIES RSI
-# ======================================================
-def render_strategies():
+# === 3. STRATÉGIES RSI ===
+with tabs[2]:
     st.header("Stratégies techniques sur le marché EUA")
-
-    if not file_path.exists():
-        st.error(f"Fichier introuvable : **{file_path.name}**.")
-        st.stop()
 
     df = pd.read_excel(file_path, sheet_name="Prices", skiprows=6, usecols="A,B")
     df.columns = ['Date', 'EUA']
@@ -229,7 +181,7 @@ def render_strategies():
                     position = {'type': 'long', 'entry_price': price}
                 elif short_cond(row):
                     position = {'type': 'short', 'entry_price': price}
-            else:
+            elif position:
                 entry = position['entry_price']
                 if position['type'] == 'long':
                     if price >= entry + 2:
@@ -238,7 +190,7 @@ def render_strategies():
                     elif price <= entry - 1:
                         trades.append({'date': date, 'pnl': -1, 'type': 'long'})
                         position = None
-                else:
+                elif position['type'] == 'short':
                     if price <= entry - 2:
                         trades.append({'date': date, 'pnl': 2, 'type': 'short'})
                         position = None
@@ -246,12 +198,9 @@ def render_strategies():
                         trades.append({'date': date, 'pnl': -1, 'type': 'short'})
                         position = None
         tdf = pd.DataFrame(trades).set_index('date').sort_index()
-        if not tdf.empty:
-            tdf['PnL €'] = tdf['pnl'] * 100000
-            tdf['Cumulative PnL'] = tdf['PnL €'].cumsum()
-            tdf['Year'] = tdf.index.year
-        else:
-            tdf = pd.DataFrame(columns=['pnl', 'PnL €', 'Cumulative PnL', 'Year'])
+        tdf['PnL €'] = tdf['pnl'] * 100000
+        tdf['Cumulative PnL'] = tdf['PnL €'].cumsum()
+        tdf['Year'] = tdf.index.year
         return tdf
 
     trades_rsi = run_strategy(df, lambda r: r['RSI'] < 30, lambda r: r['RSI'] > 70)
@@ -273,132 +222,19 @@ def render_strategies():
 
     st.subheader("Cumulative PnL des stratégies")
     fig_pnl = go.Figure()
-    fig_pnl.add_trace(go.Scatter(x=trades_rsi.index, y=trades_rsi.get('Cumulative PnL', pd.Series(dtype=float)), name='RSI Strategy'))
-    fig_pnl.add_trace(go.Scatter(x=trades_stoch.index, y=trades_stoch.get('Cumulative PnL', pd.Series(dtype=float)), name='StochRSI Strategy'))
+    fig_pnl.add_trace(go.Scatter(x=trades_rsi.index, y=trades_rsi['Cumulative PnL'], name='RSI Strategy'))
+    fig_pnl.add_trace(go.Scatter(x=trades_stoch.index, y=trades_stoch['Cumulative PnL'], name='StochRSI Strategy'))
     fig_pnl.update_layout(yaxis_title="Cumulative PnL (€)")
     st.plotly_chart(fig_pnl, use_container_width=True)
 
     st.subheader("PnL Annuel par stratégie")
-    annual_rsi = trades_rsi.groupby('Year')['PnL €'].sum() if not trades_rsi.empty else pd.Series(dtype=float)
-    annual_stoch = trades_stoch.groupby('Year')['PnL €'].sum() if not trades_stoch.empty else pd.Series(dtype=float)
+    annual_rsi = trades_rsi.groupby('Year')['PnL €'].sum()
+    annual_stoch = trades_stoch.groupby('Year')['PnL €'].sum()
 
+    x = np.arange(len(annual_rsi.index))
+    bar_width = 0.35
     fig_bar = go.Figure()
-    if not annual_rsi.empty:
-        fig_bar.add_trace(go.Bar(x=annual_rsi.index, y=annual_rsi.values, name='RSI Strategy'))
-    if not annual_stoch.empty:
-        fig_bar.add_trace(go.Bar(x=annual_stoch.index, y=annual_stoch.values, name='StochRSI Strategy'))
+    fig_bar.add_trace(go.Bar(x=annual_rsi.index - 0.2, y=annual_rsi.values, name='RSI Strategy'))
+    fig_bar.add_trace(go.Bar(x=annual_stoch.index + 0.2, y=annual_stoch.values, name='StochRSI Strategy'))
     fig_bar.update_layout(barmode='group', xaxis_title='Année', yaxis_title='PnL (€)')
     st.plotly_chart(fig_bar, use_container_width=True)
-
-with tabs[2]:
-    guard(render_strategies, "Onglet Stratégies")
-
-# ======================================================
-# 4) EUA OPEN INTEREST
-# ======================================================
-def render_oi():
-    st.header("EUA Futures - Open Interest (feuille 2)")
-
-    if not eua_oi_path.exists():
-        st.error(f"Fichier introuvable : **{eua_oi_path.name}**. Place-le dans : {APP_DIR}")
-        st.stop()
-
-    if st.button("🔄 Recharger l'OI EUA", key="refresh_oi"):
-        st.cache_data.clear()
-        st.rerun()
-
-    def _pick_sheet2(xlsx_path: Path) -> str:
-        xls = pd.ExcelFile(xlsx_path)
-        names = xls.sheet_names
-        for n in names:
-            if n.lower() == "sheet2":
-                return n
-        if len(names) >= 2:
-            return names[1]
-        return names[0]
-
-    @st.cache_data(show_spinner=False)
-    def load_eua_oi(xlsx_path: Path, file_version: float):
-        sheet_name = _pick_sheet2(xlsx_path)
-        titles_row = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None, nrows=1)
-        titles = titles_row.iloc[0, 1:].dropna().astype(str).tolist()
-        df = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None, skiprows=4)
-        df = df.iloc[:, : (1 + len(titles))]
-        df.columns = ["Date"] + titles
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        df = df.dropna(subset=["Date"]).sort_values("Date")
-        for c in df.columns[1:]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        return df, titles, sheet_name
-
-    eua_mtime = os.path.getmtime(eua_oi_path)
-    df_oi, contract_titles, used_sheet = load_eua_oi(eua_oi_path, eua_mtime)
-
-    st.caption(
-        f"Fichier: **{eua_oi_path.name}** — Feuille utilisée: **{used_sheet}** — "
-        f"Dernière date: **{df_oi['Date'].max().date()}** (mtime: {int(eua_mtime)})"
-    )
-
-    left, right = st.columns([2, 1])
-    with left:
-        sel_contracts = st.multiselect(
-            "Contrats à superposer (facultatif, sinon tous) :",
-            options=contract_titles,
-            default=contract_titles,
-            key="oi_multiselect"
-        )
-    with right:
-        single_contract = st.selectbox(
-            "Graphique individuel :",
-            options=contract_titles,
-            index=0,
-            key="oi_single_select"
-        )
-
-    st.subheader("Superposé")
-    fig_super = go.Figure()
-    to_plot = sel_contracts if sel_contracts else contract_titles
-    for col in to_plot:
-        fig_super.add_trace(go.Scatter(
-            x=df_oi["Date"], y=df_oi[col],
-            mode="lines", name=col,
-            hovertemplate="%{x|%Y-%m-%d} — %{y:,}<extra>" + col + "</extra>"
-        ))
-    fig_super.update_layout(
-        title="Historique des contrats (Open Interest) - Superposé",
-        xaxis_title="Date",
-        yaxis_title="Open Interest",
-        yaxis=dict(tickformat=","),  # séparateur des milliers
-        legend=dict(orientation="h"),
-        margin=dict(l=40, r=40, t=50, b=40),
-        height=520
-    )
-    st.plotly_chart(fig_super, use_container_width=True)
-
-    st.subheader("Individuel")
-    fig_single = go.Figure()
-    fig_single.add_trace(go.Scatter(
-        x=df_oi["Date"], y=df_oi[single_contract],
-        mode="lines", name=single_contract,
-        hovertemplate="%{x|%Y-%m-%d} — %{y:,}<extra>" + single_contract + "</extra>"
-    ))
-    fig_single.update_layout(
-        title=f"Historique Open Interest - {single_contract}",
-        xaxis_title="Date",
-        yaxis_title="Open Interest",
-        yaxis=dict(tickformat=","),  # séparateur des milliers
-        margin=dict(l=40, r=40, t=50, b=40),
-        height=460
-    )
-    st.plotly_chart(fig_single, use_container_width=True)
-
-    with st.expander("Export"):
-        st.download_button(
-            label="📥 Télécharger les données OI (CSV)",
-            data=df_oi.to_csv(index=False).encode("utf-8"),
-            file_name="eua_open_interest.csv",
-            mime="text/csv"
-        )
-
-with tabs[3]:
-    guard(render_oi, "Onglet OI")
